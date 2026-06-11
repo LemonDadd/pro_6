@@ -1,5 +1,6 @@
 import os
 import logging
+import html
 from typing import Optional, Tuple
 from pathlib import Path
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -112,6 +113,37 @@ class PdfRenderer:
                 parts.append(f'"{escaped}"')
         return ' '.join(parts)
 
+    def _build_watermark_css(self, options: RenderOptions) -> str:
+        if not options.watermark:
+            return ""
+        angle = options.watermarkAngle
+        opacity = options.watermarkOpacity
+        return f"""
+        .watermark {{
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%) rotate({angle}deg);
+            transform-origin: center center;
+            font-size: 80pt;
+            font-weight: bold;
+            color: #000;
+            opacity: {opacity};
+            pointer-events: none;
+            z-index: 9999;
+            white-space: nowrap;
+            text-align: center;
+            user-select: none;
+            letter-spacing: 0.1em;
+        }}
+        """
+
+    def _build_watermark_html(self, options: RenderOptions) -> str:
+        if not options.watermark:
+            return ""
+        text = html.escape(options.watermark)
+        return f'<div class="watermark">{text}</div>'
+
     def _build_html_document(
         self,
         body_html: str,
@@ -133,10 +165,15 @@ class PdfRenderer:
                 "date": options.cover.date or "",
             }
 
+        watermark_css = self._build_watermark_css(options)
+        watermark_html = self._build_watermark_html(options)
+
         return template.render(
             body_html=body_html,
             theme_css=theme_css,
             page_css=page_css,
+            watermark_css=watermark_css,
+            watermark_html=watermark_html,
             toc_html=toc_html,
             cover=cover_data,
             title=title or "Document",
@@ -164,11 +201,27 @@ class PdfRenderer:
 
         css_objs = [CSS(string=page_css)]
         html_doc = HTML(string=full_html, base_url=str(BASE_DIR))
-        document = html_doc.render(stylesheets=css_objs)
 
-        pdf_bytes = document.write_pdf()
+        pdf_variant = None
+        if options.outputFormat == "pdf-a-2b":
+            pdf_variant = "pdf/a-2b"
+
+        try:
+            document = html_doc.render(stylesheets=css_objs)
+            if pdf_variant:
+                pdf_bytes = document.write_pdf(pdf_variant=pdf_variant)
+            else:
+                pdf_bytes = document.write_pdf()
+        except Exception as e:
+            if pdf_variant:
+                raise ValueError(
+                    f"PDF/A-2b generation failed: {str(e)}. "
+                    f"This may be due to missing fonts, unsupported color profiles, or embedding issues. "
+                    f"Try using regular PDF (outputFormat: 'pdf')."
+                ) from e
+            raise
+
         page_count = len(document.pages)
-
         return pdf_bytes, page_count
 
     def get_available_themes(self) -> list:

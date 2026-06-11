@@ -5,7 +5,7 @@ from typing import List
 import asyncio
 
 from app.database import get_db
-from app.schemas import SyncRenderRequest, AsyncRenderRequest, JobStatus, ThemeInfo
+from app.schemas import SyncRenderRequest, AsyncRenderRequest, JobStatus, ThemeInfo, BatchRenderRequest
 from app.services.auth import api_key_header, AuthService, get_auth_service
 from app.services.render_job import RenderJobService
 from app.services.pdf_renderer import PdfRenderer
@@ -82,6 +82,23 @@ async def create_render_job(
 ):
     service = RenderJobService()
     return await service.create_async_job(db, request, api_key_hash)
+
+
+@router.post("/render/batch/jobs", response_model=JobStatus, status_code=status.HTTP_202_ACCEPTED)
+async def create_batch_render_job(
+    request: BatchRenderRequest,
+    db: Session = Depends(get_db),
+    api_key_hash: str = Depends(_get_api_key_hash),
+):
+    """
+    Create a batch render job. Renders multiple Markdown files into PDFs and packages them in a ZIP archive.
+    - Returns a JobStatus with **outputFormat: "zip"** and **fileCount: N**
+    - The resulting ZIP contains one PDF per input file (stem name + .pdf)
+    - Daily quota is consumed per file (N counts), but only **1** concurrent slot is used
+    - If any single file fails, the **entire batch is marked failed**
+    """
+    service = RenderJobService()
+    return await service.create_batch_job(db, request, api_key_hash)
 
 
 @router.get("/render/jobs/{job_id}", response_model=JobStatus)

@@ -47,34 +47,42 @@ class AuthService:
             )
         return key_hash
 
-    def check_rate_limit(self, db: Session, key_hash: str) -> bool:
+    def _get_daily_limit(self, db: Session, key_hash: str) -> int:
+        db_key = db.query(APIKeyDB).filter(APIKeyDB.keyHash == key_hash).first()
+        return db_key.dailyLimit if db_key else settings.daily_rate_limit
+
+    def check_rate_limit(self, db: Session, key_hash: str, required_count: int = 1) -> bool:
         today = self._get_today_str()
         usage = db.query(DailyUsageDB).filter(
             DailyUsageDB.apiKeyHash == key_hash,
             DailyUsageDB.date == today,
         ).first()
 
-        db_key = db.query(APIKeyDB).filter(APIKeyDB.keyHash == key_hash).first()
-        daily_limit = db_key.dailyLimit if db_key else settings.daily_rate_limit
-
+        daily_limit = self._get_daily_limit(db, key_hash)
         current_count = usage.count if usage else 0
-        if current_count >= daily_limit:
+
+        if current_count + required_count > daily_limit:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=f"Daily rate limit exceeded ({daily_limit} requests/day)",
+                detail=f"Daily rate limit exceeded ({daily_limit} requests/day). Need {required_count} more, {current_count} used.",
             )
         return True
 
     def increment_usage(self, db: Session, key_hash: str):
+        self.increment_usage_by(db, key_hash, 1)
+
+    def increment_usage_by(self, db: Session, key_hash: str, count: int):
+        if count <= 0:
+            return
         today = self._get_today_str()
         usage = db.query(DailyUsageDB).filter(
             DailyUsageDB.apiKeyHash == key_hash,
             DailyUsageDB.date == today,
         ).first()
         if usage:
-            usage.count += 1
+            usage.count += count
         else:
-            usage = DailyUsageDB(apiKeyHash=key_hash, date=today, count=1)
+            usage = DailyUsageDB(apiKeyHash=key_hash, date=today, count=count)
             db.add(usage)
         db.commit()
 

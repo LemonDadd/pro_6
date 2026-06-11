@@ -7,11 +7,11 @@ import httpx
 
 from app.database import SessionLocal
 from app.models import RenderJobDB
-from app.schemas import AsyncRenderRequest, RenderOptions, SyncRenderRequest, JobStatus
+from app.schemas import AsyncRenderRequest, RenderOptions, SyncRenderRequest, JobStatus, BatchRenderRequest
 from app.services.pdf_renderer import PdfRenderer
 from app.services.storage import StorageService
 from app.services.auth import AuthService
-from app.tasks.render_tasks import render_pdf_task
+from app.tasks.render_tasks import render_pdf_task, render_batch_pdf_task
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -39,6 +39,8 @@ class RenderJobService:
             inputType=job.inputType,
             inputSize=job.inputSize,
             theme=job.theme,
+            outputFormat=job.outputFormat or "pdf",
+            fileCount=job.fileCount,
             outputKey=job.outputKey,
             pdfUrl=pdf_url,
             pageCount=job.pageCount,
@@ -108,7 +110,12 @@ class RenderJobService:
             )
 
             try:
-                object_key, sha256_hash, size_bytes = storage.upload_pdf(pdf_bytes, job.id)
+                pdf_variant = None
+                if options.outputFormat == "pdf-a-2b":
+                    pdf_variant = "pdf-a-2b"
+                object_key, sha256_hash, size_bytes = storage.upload_pdf(
+                    pdf_bytes, job.id, pdf_variant=pdf_variant
+                )
                 job.outputKey = object_key
                 job.sizeBytes = size_bytes
                 job.sha256 = sha256_hash
@@ -264,4 +271,48 @@ class RenderJobService:
         db.refresh(job)
 
         self.auth.log_audit(db, api_key_hash, f"DELETE /v1/render/jobs/{job_id}", job_id=job_id, success=True)
+        return self._job_to_status(db, job)
+
+    async def create_batch_job(
+        self,
+        db: Session,
+        request: BatchRenderRequest,
+        api_key_hash: str,
+    ) -> JobStatus:
+        file_count = len(request.files)
+
+        self.auth.check_rate_limit(db, api_key_hash, required_count=file_count)
+        self.auth.check_concurrent_limit(db, api_key_hash)
+
+        total_input_size = sum(len(f.markdown.encode("utf-8")) for f in request.files)
+
+        job = RenderJobDB(
+            status="queued",
+            inputType="batch",
+            inputSize=total_input_size,
+            theme=request.theme,
+            optionsJson=request.options.model_dump_json(),
+            callbackUrl=request.callbackUrl,
+            apiKeyHash=api_key_hash,
+            outputFormat="zip",
+            fileCount=file_count,
+        )
+        db.add(job)
+        db.commit()
+        db.refresh(job)
+
+        self.auth.increment_usage_by(db, api_key_hash, file_count)
+        self.auth.log_audit(db, api_key_hash, "POST /v1/render/batch/jobs", job_id=job.id, success=True)
+
+        files_data = [{"filename": f.filename, "markdown": f.markdown} for f in request.files]
+
+        render_batch_pdf_task.delay(
+            job_id=job.id,
+            files=files_data,
+            theme=request.theme,
+            options_json=request.options.model_dump_json(),
+            custom_css_url=request.customCssUrl,
+            callback_url=request.callbackUrl,
+        )
+
         return self._job_to_status(db, job)

@@ -6,9 +6,16 @@
 <style>
 {{ theme_css }}
 {{ page_css }}
+{% if watermark_css %}
+{{ watermark_css }}
+{% endif %}
 </style>
 </head>
 <body>
+
+{% if watermark_html %}
+{{ watermark_html }}
+{% endif %}
 
 {% if cover %}
 <section class="cover-page" style="page-break-after: always;">

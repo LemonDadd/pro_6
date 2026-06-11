@@ -21,6 +21,8 @@ class RenderJobDB(Base):
     pageCount = Column(Integer, nullable=True)
     sizeBytes = Column(Integer, nullable=True)
     sha256 = Column(String, nullable=True)
+    fileCount = Column(Integer, nullable=True)
+    outputFormat = Column(String, default="pdf")
     error = Column(Text, nullable=True)
     callbackUrl = Column(String, nullable=True)
     apiKeyHash = Column(String, nullable=True)

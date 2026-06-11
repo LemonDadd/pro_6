@@ -1,0 +1,1 @@
+{"detail":"Sync render timed out after 30s. Use POST /v1/render/jobs async API instead."}

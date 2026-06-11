@@ -1,7 +1,10 @@
 import logging
 import json
+import zipfile
+import io
 from datetime import datetime
-from typing import Optional
+from pathlib import Path
+from typing import Optional, List, Dict
 
 import httpx
 from celery import Task
@@ -66,7 +69,13 @@ def render_pdf_task(self, job_id: str, markdown_text: str, theme: str, options_j
             custom_css_url=custom_css_url,
         )
 
-        object_key, sha256_hash, size_bytes = self.storage.upload_pdf(pdf_bytes, job_id)
+        pdf_variant = None
+        if options.outputFormat == "pdf-a-2b":
+            pdf_variant = "pdf-a-2b"
+
+        object_key, sha256_hash, size_bytes = self.storage.upload_pdf(
+            pdf_bytes, job_id, pdf_variant=pdf_variant
+        )
 
         job.status = "done"
         job.outputKey = object_key
@@ -89,6 +98,89 @@ def render_pdf_task(self, job_id: str, markdown_text: str, theme: str, options_j
 
     except Exception as e:
         logger.exception(f"Render job {job_id} failed")
+        job.status = "failed"
+        job.error = str(e)
+        job.finishedAt = datetime.utcnow()
+        db.commit()
+
+        if callback_url:
+            _trigger_callback(db, job, callback_url)
+        raise
+
+
+@celery_app.task(base=DatabaseTask, bind=True, name="app.tasks.render_batch_pdf_task")
+def render_batch_pdf_task(
+    self,
+    job_id: str,
+    files: List[Dict[str, str]],
+    theme: str,
+    options_json: str,
+    custom_css_url: Optional[str] = None,
+    callback_url: Optional[str] = None,
+):
+    db = self.db
+    job = db.query(RenderJobDB).filter(RenderJobDB.id == job_id).first()
+    if not job:
+        logger.error(f"Batch job {job_id} not found")
+        return
+
+    try:
+        job.status = "processing"
+        db.commit()
+
+        options = RenderOptions(**json.loads(options_json))
+
+        zip_buffer = io.BytesIO()
+        total_pages = 0
+        failed_file = None
+
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            for file_item in files:
+                filename = file_item["filename"]
+                markdown_text = file_item["markdown"]
+                pdf_name = Path(filename).stem + ".pdf"
+                try:
+                    pdf_bytes, page_count = self.pdf_renderer.render_to_pdf(
+                        markdown_text=markdown_text,
+                        theme=theme,
+                        options=options,
+                        custom_css_url=custom_css_url,
+                    )
+                    zf.writestr(pdf_name, pdf_bytes)
+                    total_pages += page_count
+                except Exception as e:
+                    failed_file = filename
+                    raise ValueError(
+                        f"Batch render failed at file '{filename}': {str(e)}"
+                    ) from e
+
+        zip_bytes = zip_buffer.getvalue()
+        object_key, sha256_hash, size_bytes = self.storage.upload_zip(zip_bytes, job_id)
+
+        job.status = "done"
+        job.outputKey = object_key
+        job.pageCount = total_pages
+        job.sizeBytes = size_bytes
+        job.sha256 = sha256_hash
+        job.outputFormat = "zip"
+        job.fileCount = len(files)
+        job.finishedAt = datetime.utcnow()
+        db.commit()
+
+        if callback_url:
+            _trigger_callback(db, job, callback_url)
+
+        return {
+            "jobId": job_id,
+            "status": "done",
+            "fileCount": len(files),
+            "totalPages": total_pages,
+            "sizeBytes": size_bytes,
+            "sha256": sha256_hash,
+        }
+
+    except Exception as e:
+        logger.exception(f"Batch render job {job_id} failed")
         job.status = "failed"
         job.error = str(e)
         job.finishedAt = datetime.utcnow()

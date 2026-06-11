@@ -1,7 +1,7 @@
 import io
 import hashlib
 import logging
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict
 from datetime import datetime, timedelta
 import boto3
 from botocore.client import Config
@@ -24,6 +24,10 @@ class StorageService:
             self._available = True
         except Exception as e:
             logger.warning(f"Storage service initialization failed: {e}. Uploads will be skipped.")
+
+    @property
+    def available(self) -> bool:
+        return self._available
 
     def _init_client(self):
         config_kwargs = {
@@ -50,27 +54,42 @@ class StorageService:
             else:
                 logger.warning(f"Bucket check failed: {e}")
 
-    def upload_pdf(self, pdf_bytes: bytes, job_id: str) -> Tuple[str, str, int]:
+    def _upload_bytes(
+        self,
+        data: bytes,
+        object_key: str,
+        content_type: str,
+        extra_metadata: Optional[Dict[str, str]] = None,
+    ) -> Tuple[str, str, int]:
         if not self._available or self._client is None:
             raise RuntimeError("Storage service is not available")
-        object_key = f"pdfs/{datetime.utcnow().strftime('%Y/%m/%d')}/{job_id}.pdf"
-        sha256_hash = hashlib.sha256(pdf_bytes).hexdigest()
-        size_bytes = len(pdf_bytes)
 
-        file_obj = io.BytesIO(pdf_bytes)
+        sha256_hash = hashlib.sha256(data).hexdigest()
+        size_bytes = len(data)
+
+        metadata = {"sha256": sha256_hash}
+        if extra_metadata:
+            metadata.update(extra_metadata)
+
+        file_obj = io.BytesIO(data)
         self._client.upload_fileobj(
             file_obj,
             self._bucket,
             object_key,
-            ExtraArgs={
-                "ContentType": "application/pdf",
-                "Metadata": {
-                    "sha256": sha256_hash,
-                    "job-id": job_id,
-                },
-            },
+            ExtraArgs={"ContentType": content_type, "Metadata": metadata},
         )
         return object_key, sha256_hash, size_bytes
+
+    def upload_pdf(self, pdf_bytes: bytes, job_id: str, pdf_variant: Optional[str] = None) -> Tuple[str, str, int]:
+        object_key = f"pdfs/{datetime.utcnow().strftime('%Y/%m/%d')}/{job_id}.pdf"
+        extra_meta = {"job-id": job_id}
+        if pdf_variant:
+            extra_meta["pdf-variant"] = pdf_variant
+        return self._upload_bytes(pdf_bytes, object_key, "application/pdf", extra_meta)
+
+    def upload_zip(self, zip_bytes: bytes, job_id: str) -> Tuple[str, str, int]:
+        object_key = f"pdfs/{datetime.utcnow().strftime('%Y/%m/%d')}/{job_id}.zip"
+        return self._upload_bytes(zip_bytes, object_key, "application/zip", {"job-id": job_id})
 
     def generate_presigned_url(self, object_key: str, expires_in_seconds: Optional[int] = None) -> str:
         if not self._available or self._client is None:
@@ -89,14 +108,18 @@ class StorageService:
             raise
 
     def delete_pdf(self, object_key: str) -> bool:
+        if not self._available or self._client is None:
+            return False
         try:
             self._client.delete_object(Bucket=self._bucket, Key=object_key)
             return True
         except ClientError as e:
-            logger.error(f"Failed to delete PDF {object_key}: {e}")
+            logger.error(f"Failed to delete object {object_key}: {e}")
             return False
 
     def cleanup_expired(self):
+        if not self._available or self._client is None:
+            return
         cutoff = datetime.utcnow() - timedelta(days=settings.pdf_ttl_days)
         prefix = "pdfs/"
         try:

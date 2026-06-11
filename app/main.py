@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 import logging
 
 from app.config import get_settings
-from app.database import engine, Base
+from app.database import engine, Base, run_migrations
 from app.api.v1.routes import router as v1_router
 
 settings = get_settings()
@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    run_migrations()
     Base.metadata.create_all(bind=engine)
     logger.info("Database tables created")
     yield
@@ -44,9 +45,22 @@ app.add_middleware(
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    errors = []
+    for err in exc.errors():
+        err_dict = {}
+        for k, v in err.items():
+            if k == "ctx":
+                ctx_dict = {}
+                for ck, cv in v.items():
+                    ctx_dict[ck] = str(cv)
+                err_dict[k] = ctx_dict
+            else:
+                err_dict[k] = v
+        errors.append(err_dict)
+    body_str = str(exc.body) if exc.body else None
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content={"detail": exc.errors(), "body": exc.body},
+        content={"detail": errors, "body": body_str},
     )
 
 

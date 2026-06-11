@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>{{ title }}</title>
+<style>
+{{ theme_css }}
+{{ page_css }}
+</style>
+</head>
+<body>
+
+{% if cover %}
+<section class="cover-page" style="page-break-after: always;">
+  <div class="cover-content">
+    <h1 class="cover-title">{{ cover.title }}</h1>
+    {% if cover.author %}
+    <p class="cover-author">{{ cover.author }}</p>
+    {% endif %}
+    {% if cover.date %}
+    <p class="cover-date">{{ cover.date }}</p>
+    {% endif %}
+  </div>
+</section>
+{% endif %}
+
+{% if toc_html %}
+<section class="toc-page" style="page-break-after: always;">
+{{ toc_html }}
+</section>
+{% endif %}
+
+<section class="document-body">
+{{ body_html }}
+</section>
+
+</body>
+</html>

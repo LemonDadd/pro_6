@@ -1,0 +1,163 @@
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@400;600;700&display=swap');
+
+body {
+    font-family: 'Noto Serif SC', 'Noto Sans SC', Georgia, 'Times New Roman', serif;
+    font-size: 10.5pt;
+    line-height: 1.6;
+    color: #1a1a1a;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    font-family: 'Noto Sans SC', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-weight: 700;
+    line-height: 1.2;
+    margin-top: 1.2em;
+    margin-bottom: 0.4em;
+    page-break-after: avoid;
+    color: #0a0a0a;
+}
+
+h1 {
+    font-size: 24pt;
+    text-align: center;
+    border-bottom: 3px solid #1a1a1a;
+    padding-bottom: 0.4em;
+    letter-spacing: 0.05em;
+}
+
+h2 {
+    font-size: 15pt;
+    border-bottom: 1px solid #888;
+    padding-bottom: 0.25em;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+h3 { font-size: 12pt; }
+h4 { font-size: 11pt; font-style: italic; }
+h5 { font-size: 10.5pt; }
+h6 { font-size: 10pt; color: #444; }
+
+p { margin: 0.6em 0; text-align: justify; }
+
+a { color: #1a1a1a; border-bottom: 1px dotted #888; text-decoration: none; }
+
+ul, ol { padding-left: 1.3em; margin: 0.6em 0; }
+li { margin: 0.25em 0; }
+
+blockquote {
+    border-left: 2px solid #888;
+    padding: 0.2em 1em;
+    color: #444;
+    margin: 1em 1.5em;
+    font-style: italic;
+}
+
+code {
+    font-family: 'JetBrains Mono', Menlo, Consolas, monospace;
+    font-size: 9pt;
+    background: #f0f0f0;
+    padding: 0.1em 0.35em;
+    border-radius: 2px;
+}
+
+pre {
+    background: #f5f5f5;
+    border: 1px solid #ddd;
+    border-left: 3px solid #666;
+    padding: 0.9em 1em;
+    margin: 1em 0;
+    font-family: 'JetBrains Mono', Menlo, Consolas, monospace;
+    font-size: 8.5pt;
+    line-height: 1.5;
+    page-break-inside: avoid;
+}
+
+pre code { background: none; padding: 0; border-radius: 0; }
+
+table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 1em 0;
+    font-size: 9.5pt;
+}
+
+th, td {
+    border-top: 0.5px solid #999;
+    border-bottom: 0.5px solid #999;
+    padding: 0.5em 0.7em;
+    text-align: left;
+}
+
+th {
+    font-family: 'Noto Sans SC', sans-serif;
+    font-weight: 700;
+    background: #f0f0f0;
+    text-transform: uppercase;
+    font-size: 8.5pt;
+    letter-spacing: 0.05em;
+}
+
+img { max-width: 100%; }
+
+hr { border: none; border-top: 1px solid #888; margin: 1.5em 0; }
+
+.cover-page {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    text-align: center;
+}
+.cover-title {
+    font-size: 30pt;
+    margin-bottom: 0.8em;
+    border: none;
+    text-align: center;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+}
+.cover-author {
+    font-family: 'Noto Sans SC', sans-serif;
+    font-size: 13pt;
+    color: #333;
+    margin: 0.4em 0;
+    font-weight: 500;
+}
+.cover-date {
+    font-family: 'Noto Sans SC', sans-serif;
+    font-size: 11pt;
+    color: #666;
+    margin-top: 2em;
+    letter-spacing: 0.05em;
+}
+
+.table-of-contents h2 {
+    text-align: center;
+    border-bottom: 2px solid #1a1a1a;
+    padding-bottom: 0.3em;
+    margin-bottom: 1em;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: 14pt;
+}
+.table-of-contents ul { list-style: none; padding-left: 0; }
+.table-of-contents ul ul { padding-left: 1.5em; }
+.table-of-contents li { margin: 0.5em 0; }
+.table-of-contents a { color: #1a1a1a; border: none; }
+
+.mermaid-diagram {
+    text-align: center;
+    margin: 1.2em 0;
+    page-break-inside: avoid;
+}
+.mermaid-diagram img { max-width: 100%; }
+
+.mermaid-placeholder {
+    background: #f5f5dc;
+    border: 1px dashed #999;
+    padding: 1em;
+    font-family: monospace;
+    font-size: 8.5pt;
+    white-space: pre-wrap;
+}

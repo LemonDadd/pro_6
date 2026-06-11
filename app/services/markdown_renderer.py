@@ -3,7 +3,8 @@ import base64
 import logging
 from typing import Optional, Tuple
 from markdown_it import MarkdownIt
-from mdit_py_plugins import front_matter, anchors, tasklists, tables, deflist
+from mdit_py_plugins import front_matter, anchors, tasklists, deflist
+from mdit_py_plugins import gfm
 from pygments import highlight
 from pygments.lexers import get_lexer_by_name, guess_lexer
 from pygments.formatters import HtmlFormatter
@@ -27,7 +28,7 @@ class MarkdownRenderer:
         self.md.use(front_matter.front_matter_plugin)
         self.md.use(anchors.anchors_plugin)
         self.md.use(tasklists.tasklists_plugin)
-        self.md.use(tables.tables_plugin)
+        gfm.gfm_plugin(self.md)
         self.md.use(deflist.deflist_plugin)
 
     def _highlight_code(self, code: str, lang: Optional[str] = None) -> str:
@@ -101,9 +102,7 @@ class MarkdownRenderer:
         if not enable:
             return md
 
-        original_render = md.renderer.rules.get("fence") or md.renderer.rules.get("code_block")
-
-        def fence_rule(tokens, idx, options, env, slf):
+        def fence_rule(tokens, idx, options, env):
             token = tokens[idx]
             info = token.info.strip() if token.info else ""
             lang = info.split()[0] if info else None

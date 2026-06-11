@@ -1,10 +1,9 @@
 import os
 import logging
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional, Tuple
 from pathlib import Path
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from weasyprint import HTML, CSS
-from weasyprint.fonts import FontConfiguration
 import httpx
 
 from app.config import get_settings
@@ -27,7 +26,6 @@ class PdfRenderer:
             loader=FileSystemLoader(str(TEMPLATES_DIR)),
             autoescape=select_autoescape(["html", "xml"]),
         )
-        self.font_config = FontConfiguration()
         self._ensure_dirs()
 
     @staticmethod
@@ -41,13 +39,8 @@ class PdfRenderer:
         if theme_file.exists():
             css_parts.append(theme_file.read_text(encoding="utf-8"))
 
-        pygments_css = os.path.join(os.path.dirname(__file__), "..", "static", "pygments.css")
-        pygments_path = Path(pygments_css)
-        if pygments_path.exists():
-            css_parts.append(pygments_path.read_text(encoding="utf-8"))
-        else:
-            from pygments.formatters import HtmlFormatter
-            css_parts.append(HtmlFormatter(style="default").get_style_defs(".codehilite"))
+        from pygments.formatters import HtmlFormatter
+        css_parts.append(HtmlFormatter(style="default").get_style_defs(".codehilite"))
 
         if custom_css_url and self._is_allowed_css_domain(custom_css_url):
             try:
@@ -165,20 +158,12 @@ class PdfRenderer:
         page_css = self._build_page_css(options)
         full_html = self._build_html_document(body_html, theme_css, page_css, options, title)
 
-        css_objs = [CSS(string=page_css, font_config=self.font_config)]
+        css_objs = [CSS(string=page_css)]
         html_doc = HTML(string=full_html, base_url=str(BASE_DIR))
-        document = html_doc.render(stylesheets=css_objs, font_config=self.font_config)
+        document = html_doc.render(stylesheets=css_objs)
 
         pdf_bytes = document.write_pdf()
         page_count = len(document.pages)
-
-        missing_fonts = []
-        for page in document.pages:
-            for text in page.text_fonts:
-                if "?" in str(text) or "missing" in str(text).lower():
-                    missing_fonts.append(str(text))
-        if missing_fonts:
-            logger.warning(f"Missing glyphs detected: {set(missing_fonts)}")
 
         return pdf_bytes, page_count
 

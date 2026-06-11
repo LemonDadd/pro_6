@@ -5,6 +5,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 import httpx
 
+from app.database import SessionLocal
 from app.models import RenderJobDB
 from app.schemas import AsyncRenderRequest, RenderOptions, SyncRenderRequest, JobStatus
 from app.services.pdf_renderer import PdfRenderer
@@ -48,35 +49,125 @@ class RenderJobService:
             finishedAt=job.finishedAt,
         )
 
+    def sync_render_preflight(
+        self,
+        db: Session,
+        request: SyncRenderRequest,
+        api_key_hash: str,
+    ) -> str:
+        size_kb = len(request.markdown.encode("utf-8")) / 1024
+        if size_kb > settings.sync_max_size_kb:
+            from fastapi import HTTPException, status
+            raise HTTPException(
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                detail=f"Markdown too large for sync render ({size_kb:.1f}KB > {settings.sync_max_size_kb}KB). Use async API.",
+            )
+
+        self.auth.check_rate_limit(db, api_key_hash)
+        self.auth.check_concurrent_limit(db, api_key_hash)
+
+        job = RenderJobDB(
+            status="processing",
+            inputType="markdown",
+            inputSize=len(request.markdown.encode("utf-8")),
+            theme=request.theme,
+            optionsJson=request.options.model_dump_json(),
+            apiKeyHash=api_key_hash,
+        )
+        db.add(job)
+        db.commit()
+        db.refresh(job)
+
+        self.auth.increment_usage(db, api_key_hash)
+        return job.id
+
+    @staticmethod
+    def execute_sync_render_workload(
+        job_id: str,
+        markdown: str,
+        theme: str,
+        options_dict: dict,
+        custom_css_url: Optional[str],
+        api_key_hash: str,
+    ) -> Tuple[bytes, int]:
+        thread_db = SessionLocal()
+        pdf_renderer = PdfRenderer()
+        storage = StorageService()
+        auth = AuthService()
+        try:
+            job = thread_db.query(RenderJobDB).filter(RenderJobDB.id == job_id).first()
+            if not job:
+                raise RuntimeError(f"Job {job_id} not found in thread DB")
+
+            options = RenderOptions(**options_dict)
+            pdf_bytes, page_count = pdf_renderer.render_to_pdf(
+                markdown_text=markdown,
+                theme=theme,
+                options=options,
+                custom_css_url=custom_css_url,
+            )
+
+            try:
+                object_key, sha256_hash, size_bytes = storage.upload_pdf(pdf_bytes, job.id)
+                job.outputKey = object_key
+                job.sizeBytes = size_bytes
+                job.sha256 = sha256_hash
+            except Exception as e:
+                logger.warning(f"Sync render S3 upload failed (non-critical): {e}")
+
+            job.status = "done"
+            job.pageCount = page_count
+            job.finishedAt = datetime.utcnow()
+            thread_db.commit()
+
+            auth.log_audit(thread_db, api_key_hash, "POST /v1/render/sync", job_id=job.id, success=True)
+            return pdf_bytes, page_count
+        except Exception as e:
+            job = thread_db.query(RenderJobDB).filter(RenderJobDB.id == job_id).first()
+            if job:
+                job.status = "failed"
+                job.error = str(e)
+                job.finishedAt = datetime.utcnow()
+                thread_db.commit()
+            auth.log_audit(thread_db, api_key_hash, "POST /v1/render/sync", job_id=job_id, success=False, error=str(e))
+            raise
+        finally:
+            thread_db.close()
+
+    @staticmethod
+    def mark_job_failed(
+        job_id: str,
+        api_key_hash: str,
+        error_msg: str,
+    ):
+        thread_db = SessionLocal()
+        auth = AuthService()
+        try:
+            job = thread_db.query(RenderJobDB).filter(RenderJobDB.id == job_id).first()
+            if job:
+                job.status = "failed"
+                job.error = error_msg
+                job.finishedAt = datetime.utcnow()
+                thread_db.commit()
+            auth.log_audit(thread_db, api_key_hash, "POST /v1/render/sync", job_id=job_id, success=False, error=error_msg)
+        finally:
+            thread_db.close()
+
     def sync_render(
         self,
         db: Session,
         request: SyncRenderRequest,
         api_key_hash: str,
     ) -> Tuple[bytes, int]:
-        size_kb = len(request.markdown.encode("utf-8")) / 1024
-        if size_kb > settings.sync_max_size_kb:
-            from fastapi import HTTPException, status
-            raise HTTPException(
-                status_code=status.HTTP_413_PAYLOAD_TOO_LARGE,
-                detail=f"Markdown too large for sync render ({size_kb:.1f}KB > {settings.sync_max_size_kb}KB). Use async API.",
-            )
-
-        self.auth.check_rate_limit(db, api_key_hash)
-        self.auth.increment_usage(db, api_key_hash)
-
-        try:
-            pdf_bytes, page_count = self.pdf_renderer.render_to_pdf(
-                markdown_text=request.markdown,
-                theme=request.theme,
-                options=request.options,
-                custom_css_url=request.customCssUrl,
-            )
-            self.auth.log_audit(db, api_key_hash, "POST /v1/render/sync", success=True)
-            return pdf_bytes, page_count
-        except Exception as e:
-            self.auth.log_audit(db, api_key_hash, "POST /v1/render/sync", success=False, error=str(e))
-            raise
+        job_id = self.sync_render_preflight(db, request, api_key_hash)
+        return self.execute_sync_render_workload(
+            job_id=job_id,
+            markdown=request.markdown,
+            theme=request.theme,
+            options_dict=request.options.model_dump(),
+            custom_css_url=request.customCssUrl,
+            api_key_hash=api_key_hash,
+        )
 
     async def _fetch_url_content(self, url: str) -> str:
         async with httpx.AsyncClient(timeout=30.0) as client:

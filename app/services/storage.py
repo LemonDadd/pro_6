@@ -17,8 +17,13 @@ class StorageService:
     def __init__(self):
         self._client = None
         self._bucket = settings.s3_bucket
-        self._init_client()
-        self._ensure_bucket()
+        self._available = False
+        try:
+            self._init_client()
+            self._ensure_bucket()
+            self._available = True
+        except Exception as e:
+            logger.warning(f"Storage service initialization failed: {e}. Uploads will be skipped.")
 
     def _init_client(self):
         config_kwargs = {
@@ -46,6 +51,8 @@ class StorageService:
                 logger.warning(f"Bucket check failed: {e}")
 
     def upload_pdf(self, pdf_bytes: bytes, job_id: str) -> Tuple[str, str, int]:
+        if not self._available or self._client is None:
+            raise RuntimeError("Storage service is not available")
         object_key = f"pdfs/{datetime.utcnow().strftime('%Y/%m/%d')}/{job_id}.pdf"
         sha256_hash = hashlib.sha256(pdf_bytes).hexdigest()
         size_bytes = len(pdf_bytes)
@@ -66,6 +73,8 @@ class StorageService:
         return object_key, sha256_hash, size_bytes
 
     def generate_presigned_url(self, object_key: str, expires_in_seconds: Optional[int] = None) -> str:
+        if not self._available or self._client is None:
+            raise RuntimeError("Storage service is not available")
         if expires_in_seconds is None:
             expires_in_seconds = settings.pdf_ttl_days * 24 * 3600
         try:

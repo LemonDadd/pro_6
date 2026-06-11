@@ -67,46 +67,50 @@ class PdfRenderer:
     def _build_page_css(self, options: RenderOptions) -> str:
         page_size = options.pageSize
         margins = options.margins
+
+        margin_boxes = ""
+        if options.header:
+            header_template = self._process_header_footer_template(options.header)
+            margin_boxes += f"""
+            @top-center {{
+                content: {header_template};
+                font-size: 9pt;
+                color: #666;
+            }}
+            """
+        if options.footer:
+            footer_template = self._process_header_footer_template(options.footer)
+            margin_boxes += f"""
+            @bottom-center {{
+                content: {footer_template};
+                font-size: 9pt;
+                color: #666;
+            }}
+            """
+
         page_css = f"""
         @page {{
             size: {page_size};
             margin: {margins.top}mm {margins.right}mm {margins.bottom}mm {margins.left}mm;
+            {margin_boxes}
         }}
         """
-
-        if options.header:
-            header_template = self._process_header_footer_template(options.header)
-            page_css += f"""
-            @page {{
-                @top-center {{
-                    content: "{header_template}";
-                    font-size: 9pt;
-                    color: #666;
-                }}
-            }}
-            """
-
-        if options.footer:
-            footer_template = self._process_header_footer_template(options.footer)
-            page_css += f"""
-            @page {{
-                @bottom-center {{
-                    content: "{footer_template}";
-                    font-size: 9pt;
-                    color: #666;
-                }}
-            }}
-            """
-
         return page_css
 
     @staticmethod
     def _process_header_footer_template(template: str) -> str:
         import re
-        template = re.sub(r"\{\{page\}\}", '" counter(page) "', template)
-        template = re.sub(r"\{\{pages\}\}", '" counter(pages) "', template)
-        template = template.replace('""', '')
-        return template
+        tokens = re.findall(r'\{\{page\}\}|\{\{pages\}\}|[^{}]+', template)
+        parts = []
+        for token in tokens:
+            if token == '{{page}}':
+                parts.append('counter(page)')
+            elif token == '{{pages}}':
+                parts.append('counter(pages)')
+            else:
+                escaped = token.replace('"', '\\"')
+                parts.append(f'"{escaped}"')
+        return ' '.join(parts)
 
     def _build_html_document(
         self,

@@ -2,10 +2,11 @@ from fastapi import APIRouter, Depends, HTTPException, Security, status
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from typing import List
+import asyncio
 
 from app.database import get_db
 from app.schemas import SyncRenderRequest, AsyncRenderRequest, JobStatus, ThemeInfo
-from app.services.auth import api_key_header, AuthService, hash_api_key, get_auth_service
+from app.services.auth import api_key_header, AuthService, get_auth_service
 from app.services.render_job import RenderJobService
 from app.services.pdf_renderer import PdfRenderer
 from app.config import get_settings
@@ -23,15 +24,38 @@ def _get_api_key_hash(
 
 
 @router.post("/render/sync", response_class=Response)
-def render_sync(
+async def render_sync(
     request: SyncRenderRequest,
     db: Session = Depends(get_db),
     api_key_hash: str = Depends(_get_api_key_hash),
-    auth: AuthService = Depends(get_auth_service),
 ):
     service = RenderJobService()
+
+    job_id = service.sync_render_preflight(db, request, api_key_hash)
+
     try:
-        pdf_bytes, page_count = service.sync_render(db, request, api_key_hash)
+        pdf_bytes, page_count = await asyncio.wait_for(
+            asyncio.to_thread(
+                RenderJobService.execute_sync_render_workload,
+                job_id=job_id,
+                markdown=request.markdown,
+                theme=request.theme,
+                options_dict=request.options.model_dump(),
+                custom_css_url=request.customCssUrl,
+                api_key_hash=api_key_hash,
+            ),
+            timeout=settings.sync_timeout_seconds,
+        )
+    except asyncio.TimeoutError:
+        RenderJobService.mark_job_failed(
+            job_id=job_id,
+            api_key_hash=api_key_hash,
+            error_msg=f"Sync render timed out after {settings.sync_timeout_seconds}s",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail=f"Sync render timed out after {settings.sync_timeout_seconds}s. Use POST /v1/render/jobs async API instead.",
+        )
     except HTTPException:
         raise
     except Exception as e:

@@ -40,6 +40,7 @@ class RenderJobService:
             inputSize=job.inputSize,
             theme=job.theme,
             outputFormat=job.outputFormat or "pdf",
+            pdfVariant=job.pdfVariant,
             fileCount=job.fileCount,
             outputKey=job.outputKey,
             pdfUrl=pdf_url,
@@ -75,6 +76,7 @@ class RenderJobService:
             theme=request.theme,
             optionsJson=request.options.model_dump_json(),
             apiKeyHash=api_key_hash,
+            pdfVariant=request.options.outputFormat if request.options.outputFormat != "pdf" else None,
         )
         db.add(job)
         db.commit()
@@ -91,7 +93,9 @@ class RenderJobService:
         options_dict: dict,
         custom_css_url: Optional[str],
         api_key_hash: str,
+        cancel_event: Optional[object] = None,
     ) -> Tuple[bytes, int]:
+        import threading
         thread_db = SessionLocal()
         pdf_renderer = PdfRenderer()
         storage = StorageService()
@@ -100,6 +104,9 @@ class RenderJobService:
             job = thread_db.query(RenderJobDB).filter(RenderJobDB.id == job_id).first()
             if not job:
                 raise RuntimeError(f"Job {job_id} not found in thread DB")
+
+            if job.status == "failed":
+                return b"", 0
 
             options = RenderOptions(**options_dict)
             pdf_bytes, page_count = pdf_renderer.render_to_pdf(
@@ -122,6 +129,11 @@ class RenderJobService:
             except Exception as e:
                 logger.warning(f"Sync render S3 upload failed (non-critical): {e}")
 
+            thread_db.refresh(job)
+            if job.status == "failed":
+                logger.info(f"Job {job_id} was marked failed by timeout, skipping done update")
+                return b"", 0
+
             job.status = "done"
             job.pageCount = page_count
             job.finishedAt = datetime.utcnow()
@@ -130,8 +142,11 @@ class RenderJobService:
             auth.log_audit(thread_db, api_key_hash, "POST /v1/render/sync", job_id=job.id, success=True)
             return pdf_bytes, page_count
         except Exception as e:
-            job = thread_db.query(RenderJobDB).filter(RenderJobDB.id == job_id).first()
-            if job:
+            try:
+                thread_db.refresh(job)
+            except Exception:
+                job = thread_db.query(RenderJobDB).filter(RenderJobDB.id == job_id).first()
+            if job and job.status != "failed":
                 job.status = "failed"
                 job.error = str(e)
                 job.finishedAt = datetime.utcnow()
@@ -151,7 +166,7 @@ class RenderJobService:
         auth = AuthService()
         try:
             job = thread_db.query(RenderJobDB).filter(RenderJobDB.id == job_id).first()
-            if job:
+            if job and job.status in ("queued", "processing"):
                 job.status = "failed"
                 job.error = error_msg
                 job.finishedAt = datetime.utcnow()
@@ -215,6 +230,7 @@ class RenderJobService:
             optionsJson=request.options.model_dump_json(),
             callbackUrl=request.callbackUrl,
             apiKeyHash=api_key_hash,
+            pdfVariant=request.options.outputFormat if request.options.outputFormat != "pdf" else None,
         )
         db.add(job)
         db.commit()
@@ -281,10 +297,24 @@ class RenderJobService:
     ) -> JobStatus:
         file_count = len(request.files)
 
-        self.auth.check_rate_limit(db, api_key_hash, required_count=file_count)
-        self.auth.check_concurrent_limit(db, api_key_hash)
+        if file_count > settings.batch_max_files:
+            from fastapi import HTTPException, status
+            raise HTTPException(
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                detail=f"Too many files in batch ({file_count} > {settings.batch_max_files}).",
+            )
 
         total_input_size = sum(len(f.markdown.encode("utf-8")) for f in request.files)
+        total_input_kb = total_input_size / 1024
+        if total_input_kb > settings.batch_max_payload_kb:
+            from fastapi import HTTPException, status
+            raise HTTPException(
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                detail=f"Batch payload too large ({total_input_kb:.1f}KB > {settings.batch_max_payload_kb}KB).",
+            )
+
+        self.auth.check_rate_limit(db, api_key_hash, required_count=file_count)
+        self.auth.check_concurrent_limit(db, api_key_hash)
 
         job = RenderJobDB(
             status="queued",
@@ -296,6 +326,7 @@ class RenderJobService:
             apiKeyHash=api_key_hash,
             outputFormat="zip",
             fileCount=file_count,
+            pdfVariant=request.options.outputFormat if request.options.outputFormat != "pdf" else None,
         )
         db.add(job)
         db.commit()

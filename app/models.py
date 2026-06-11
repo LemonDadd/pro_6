@@ -23,6 +23,7 @@ class RenderJobDB(Base):
     sha256 = Column(String, nullable=True)
     fileCount = Column(Integer, nullable=True)
     outputFormat = Column(String, default="pdf")
+    pdfVariant = Column(String, nullable=True)
     error = Column(Text, nullable=True)
     callbackUrl = Column(String, nullable=True)
     apiKeyHash = Column(String, nullable=True)

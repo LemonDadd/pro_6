@@ -31,6 +31,7 @@ def _sqlite_add_column_if_missing(table: str, column: str, col_def: str):
 def run_migrations():
     _sqlite_add_column_if_missing("render_jobs", "fileCount", "INTEGER")
     _sqlite_add_column_if_missing("render_jobs", "outputFormat", "VARCHAR DEFAULT 'pdf'")
+    _sqlite_add_column_if_missing("render_jobs", "pdfVariant", "VARCHAR")
 
 
 def get_db():

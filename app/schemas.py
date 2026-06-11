@@ -1,6 +1,9 @@
+import re
 from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Optional, Literal, List
 from datetime import datetime
+
+_SAFE_FILENAME_RE = re.compile(r'^[a-zA-Z0-9_\-\.\s]+\.md$')
 
 
 class PageMargins(BaseModel):
@@ -75,6 +78,28 @@ class BatchFileItem(BaseModel):
     filename: str = Field(..., description="Markdown file name, e.g. 'ch01.md'")
     markdown: str = Field(..., description="Markdown content")
 
+    @field_validator("filename")
+    @classmethod
+    def validate_filename(cls, v: str) -> str:
+        if not v:
+            raise ValueError("Filename must not be empty")
+        if len(v) > 255:
+            raise ValueError("Filename too long (max 255 chars)")
+        if "\x00" in v:
+            raise ValueError("Filename contains null byte")
+        if "/" in v or "\\" in v:
+            raise ValueError(f"Filename must not contain path separators: {v}")
+        if ".." in v:
+            raise ValueError(f"Filename must not contain path traversal: {v}")
+        if not v.endswith(".md"):
+            raise ValueError(f"Filename must end with .md: {v}")
+        if not _SAFE_FILENAME_RE.match(v):
+            raise ValueError(
+                f"Filename contains unsafe characters: {v}. "
+                f"Only alphanumeric, underscore, hyphen, dot, and space are allowed."
+            )
+        return v
+
 
 class BatchRenderRequest(BaseModel):
     """异步批量渲染多个 Markdown 文件，返回 ZIP 压缩包的 Job"""
@@ -89,15 +114,11 @@ class BatchRenderRequest(BaseModel):
     def validate_files(cls, v: List[BatchFileItem]) -> List[BatchFileItem]:
         if not v:
             raise ValueError("At least one file is required")
-        if len(v) > 100:
-            raise ValueError("Maximum 100 files per batch")
         seen = set()
         for f in v:
             if f.filename in seen:
                 raise ValueError(f"Duplicate filename: {f.filename}")
             seen.add(f.filename)
-            if not f.filename.endswith(".md"):
-                raise ValueError(f"Filename must end with .md: {f.filename}")
         return v
 
 
@@ -108,6 +129,7 @@ class JobStatus(BaseModel):
     inputSize: int
     theme: str
     outputFormat: Literal["pdf", "zip"] = Field(default="pdf", description="Output file format")
+    pdfVariant: Optional[str] = Field(default=None, description="PDF variant, e.g. 'pdf-a-2b'")
     fileCount: Optional[int] = Field(default=None, description="Number of output files (batch jobs)")
     outputKey: Optional[str] = None
     pdfUrl: Optional[str] = None

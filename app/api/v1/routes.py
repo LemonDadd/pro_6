@@ -53,15 +53,26 @@ async def render_sync(
             error_msg=f"Sync render timed out after {settings.sync_timeout_seconds}s",
         )
         raise HTTPException(
-            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            status_code=status.HTTP_408_REQUEST_TIMEOUT,
             detail=f"Sync render timed out after {settings.sync_timeout_seconds}s. Use POST /v1/render/jobs async API instead.",
         )
     except HTTPException:
         raise
     except Exception as e:
+        RenderJobService.mark_job_failed(
+            job_id=job_id,
+            api_key_hash=api_key_hash,
+            error_msg=str(e),
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Render failed: {str(e)}",
+        )
+
+    if not pdf_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Render produced no output (job may have been cancelled)",
         )
 
     return Response(

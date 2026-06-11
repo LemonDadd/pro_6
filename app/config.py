@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     max_concurrent_jobs: int = 3
     daily_rate_limit: int = 100
 
+    batch_max_files: int = 100
+    batch_max_payload_kb: int = 10240
+
     allowed_css_domains: str = "localhost,cdn.jsdelivr.net,cdnjs.cloudflare.com"
 
     mermaid_renderer: str = "kroki"
